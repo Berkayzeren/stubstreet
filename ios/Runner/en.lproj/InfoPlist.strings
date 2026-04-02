@@ -1,0 +1,10 @@
+/* 
+  InfoPlist.strings - English localization
+  stubstreet
+
+  Created by Flutter for localized app names.
+*/
+
+// English app name for international users
+"CFBundleName" = "Stub Street";
+"CFBundleDisplayName" = "Stub Street";

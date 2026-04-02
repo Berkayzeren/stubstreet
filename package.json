@@ -1,0 +1,22 @@
+{
+  "name": "stubstreet",
+  "version": "1.0.0",
+  "description": "StubStreet - Bilet Satış Platformu",
+  "scripts": {
+    "build": "flutter build apk --release && flutter build web --release",
+    "clean": "flutter clean",
+    "get": "flutter pub get",
+    "test": "flutter test",
+    "deploy": "firebase deploy",
+    "deploy:functions": "firebase deploy --only functions",
+    "deploy:hosting": "firebase deploy --only hosting",
+    "deploy:firestore": "firebase deploy --only firestore"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "express-validator": "^7.2.1",
+    "socket.io": "^4.8.1",
+    "uuid": "^11.1.0"
+  }
+}

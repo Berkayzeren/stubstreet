@@ -1,0 +1,297 @@
+{
+    "@@locale": "en",
+    "appTitle": "Stub Street",
+    "appSubtitle": "Sell your ticket, buy your dream",
+    "login": "Login",
+    "register": "Register",
+    "email": "Email",
+    "password": "Password",
+    "confirmPassword": "Confirm Password",
+    "firstName": "First Name",
+    "lastName": "Last Name",
+    "phoneNumber": "Phone Number",
+    "identityNumber": "Identity Number",
+    "birthDate": "Birth Date",
+    "gender": "Gender",
+    "male": "Male",
+    "female": "Female",
+    "other": "Other",
+    "verificationCode": "Verification Code",
+    "sendCode": "Send Code",
+    "resendCode": "Resend Code",
+    "verify": "Verify",
+    "dontHaveAccount": "Don't have an account? Register",
+    "alreadyHaveAccount": "Already have an account? Login",
+    "createAccount": "Create Account",
+    "forgotPassword": "Forgot Password?",
+    "or": "or",
+    "welcomeMessage": "Welcome, {email}!",
+    "emailRequired": "Email is required",
+    "invalidEmail": "Please enter a valid email address",
+    "passwordRequired": "Password is required",
+    "passwordTooShort": "Password must be at least 6 characters",
+    "passwordsDontMatch": "Passwords don't match",
+    "firstNameRequired": "First name is required",
+    "lastNameRequired": "Last name is required",
+    "phoneRequired": "Phone number is required",
+    "invalidPhone": "Please enter a valid phone number",
+    "identityRequired": "Identity number is required",
+    "invalidIdentity": "Please enter a valid identity number",
+    "birthDateRequired": "Birth date is required",
+    "mustBeAdult": "You must be at least 18 years old",
+    "loginFailed": "Login failed",
+    "registrationFailed": "Registration failed",
+    "verificationFailed": "Verification failed",
+    "phoneVerification": "Phone Verification",
+    "phoneVerificationDesc": "Enter the 6-digit code sent to your phone",
+    "featureComingSoon": "This feature is coming soon",
+    "termsAndConditions": "Terms and Conditions",
+    "privacyPolicy": "Privacy Policy",
+    "kvkk": "Data Protection Policy",
+    "iAgreeToThe": "I agree to the:",
+    "and": "and",
+    "mustAcceptTerms": "You must accept the terms and conditions",
+    "profile": "Profile",
+    "home": "Home",
+    "addTicket": "Add Ticket",
+    "myTickets": "My Tickets",
+    "myOrders": "My Orders",
+    "messages": "Messages",
+    "settings": "Settings",
+  "appearance": "Appearance",
+  "theme": "Theme",
+  "language": "Language",
+  "notifications": "Notifications",
+  "pushNotifications": "Push Notifications",
+  "emailNotifications": "Email Notifications",
+  "messageNotifications": "Message Notifications",
+  "ticketNotifications": "Ticket Notifications",
+  "privacy": "Privacy",
+  "securitySettings": "Security Settings",
+  "account": "Account",
+  "helpSupport": "Help & Support",
+  "aboutApp": "About App",
+    "logout": "Logout",
+    "editProfile": "Edit Profile",
+    "save": "Save",
+    "cancel": "Cancel",
+  "ok": "OK",
+  "close": "Close",
+  "back": "Back",
+  "selectTheme": "Select Theme",
+  "selectLanguage": "Select Language",
+  "feedback": "Feedback",
+  "shareYourSuggestions": "Share your suggestions with us",
+  "sendEmail": "Send Email",
+  "feedbackEmailSubject": "StubStreet Feedback",
+  "privacyDataUsage": "Privacy & Data Usage",
+  "comingSoon": "Coming soon",
+  "loginRequired": "Login required",
+  "loginToUseFeature": "You must log in to use this feature.",
+    "search": "Search",
+    "searchTickets": "Search tickets...",
+    "noResults": "No results found",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "warning": "Warning",
+    "info": "Info",
+    "conversations": "Conversations",
+    "archived": "Archived",
+    "searchConversations": "Search Conversations",
+    "noConversations": "No Conversations",
+    "noSearchResults": "No Search Results",
+    "tryDifferentSearch": "Try a different search",
+    "startNewConversation": "Start New Conversation",
+    "startConversation": "Start Conversation",
+    "errorLoadingConversations": "Error loading conversations",
+    "retry": "Retry",
+    "muteNotifications": "Mute Notifications",
+    "archiveConversation": "Archive Conversation",
+    "blockUser": "Block User",
+    "deleteConversation": "Delete Conversation",
+    "deleteConversationConfirmation": "Are you sure you want to delete this conversation?",
+    "delete": "Delete",
+    "lightTheme": "Light Theme",
+    "darkTheme": "Dark Theme",
+    "systemTheme": "System Theme",
+    "guest": "Guest",
+  "signOut": "Sign Out",
+  "emailOrUsername": "Email or Username",
+  "emailOrUsernameRequired": "Email or username is required",
+  "username": "Username",
+  "usernameHint": "example_username",
+  "usernameRequired": "Username is required",
+  "usernameMinLength": "Username must be at least 3 characters",
+  "usernameMaxLength": "Username must be at most 20 characters",
+  "usernameAllowedChars": "Only letters, numbers, and _ are allowed",
+  "usernameNoLeadingTrailingSpace": "Cannot start or end with a space",
+  "usernameAlreadyTaken": "This username is already taken",
+  "continueAsGuest": "Continue without signing up",
+  "usernameEmailNotFound": "No email found for this username",
+  "usernameResolveFailed": "Username could not be resolved. Please enter your email address.",
+  "next": "Next",
+  "tcknLabel": "T.R. Identity Number",
+  "tcknHint": "11-digit TCKN",
+  "tcknRequired": "T.R. Identity Number is required",
+  "tckn11Digits": "Must be 11 digits",
+  "tcknStartsWithZero": "Cannot start with 0",
+  "invalidTcknK1": "Invalid TCKN (k1)",
+  "invalidTcknK2": "Invalid TCKN (k2)",
+  "phone": "Phone",
+  "selectCountryCode": "Select Country Code",
+  "localPhoneHint": "Local number (e.g., 5XXXXXXXXX)",
+  "phoneLenTurkey": "Must be 10 digits for Turkey (5XXXXXXXXX)",
+  "phoneLenGeneric": "Enter a valid local number length",
+  "invalidPhoneFormat": "Invalid phone format",
+  "sendingSms": "Sending SMS...",
+  "resendSmsIn": "Resend ({time})",
+  "resendSms": "Resend SMS",
+  "sendSmsCode": "Send SMS Code",
+  "smsCodeLabel": "SMS Verification Code",
+  "smsCodeHint": "Enter the 6-digit code",
+  "smsCodeRequired": "SMS code is required",
+  "smsCodeSixDigits": "SMS code must be 6 digits",
+  "smsCodeSent": "SMS code sent. Please check your phone.",
+  "smsInfoSentTo": "The SMS code was sent to {phone}. If you did not receive it, check your spam.",
+  "smsSendError": "An error occurred while sending SMS: {error}",
+  "completeRegistration": "Complete Registration",
+  "pleaseAcceptAllAgreements": "Please accept all agreements to continue",
+  "missingRegistrationData": "Missing registration data. Please complete previous steps.",
+  "guestContinueError": "An error occurred during guest login: {error}",
+  "unexpectedAuthError": "Unexpected authentication error",
+  "openText": "Open Text",
+  "openInSeparateWindow": "Open in a separate window",
+  "acceptPrivacyPolicy": "I have read and accept the Privacy Policy",
+  "acceptKvkkNotice": "I have read and accept the KVKK Notice",
+  "acceptTerms": "I have read and accept the User Agreement",
+  "nameMinLength": "{field} must be at least {min} characters",
+  "nameLettersOnly": "{field} must contain letters only",
+  "fieldFirstName": "First Name",
+  "fieldLastName": "Last Name",
+  "forgotPasswordDescription": "Enter your email address or username; we'll send a reset link to your email.",
+  "sendResetEmail": "Send Reset Email",
+  "passwordResetEmailSent": "Password reset email sent to {email}",
+  "passwordResetEmailFailed": "Failed to send password reset email: {error}",
+    "@welcomeMessage": {
+        "description": "Welcome message on the home screen",
+        "placeholders": {
+            "email": {
+                "type": "String",
+                "example": "user@example.com"
+            }
+        }
+  },
+  "@passwordResetEmailSent": {
+    "description": "Snackbar message shown after sending a password reset email",
+    "placeholders": {
+      "email": {
+        "type": "String",
+        "example": "user@example.com"
+      }
+    }
+  },
+  "@passwordResetEmailFailed": {
+    "description": "Snackbar error message shown when sending password reset fails",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "network_error"
+      }
+    }
+  },
+  "@resendSmsIn": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "@smsInfoSentTo": {
+    "placeholders": {
+      "phone": {}
+    }
+  },
+  "@smsSendError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "@passwordResetEmailSent": {
+    "placeholders": {
+      "email": {}
+    }
+  },
+  "@guestContinueError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "@nameMinLength": {
+    "placeholders": {
+      "field": {},
+      "min": {}
+    }
+  },
+  "@nameLettersOnly": {
+    "placeholders": {
+      "field": {}
+    }
+  },
+  
+  "reportUser": "Report User",
+  "reportUserReason": "Why are you reporting this user?",
+  "reportReasonSpam": "Spam or harassment",
+  "reportReasonFakeProfile": "Fake profile",
+  "reportReasonInappropriate": "Inappropriate content",
+  "reportReasonFraud": "Fraud",
+  "reportReasonOther": "Other",
+  "report": "Report",
+  
+  "activeTicket": "Active Ticket",
+  "totalSellers": "Total Sellers",
+  "thisWeek": "This Week",
+  "categories": "Categories",
+  "concerts": "Concerts",
+  "concertsDescription": "Live music experience",
+  "sports": "Sports",
+  "sportsDescription": "Sports events",
+  "theater": "Theater",
+  "theaterDescription": "Performing arts",
+  "festivals": "Festivals",
+  "festivalsDescription": "Music and art festivals",
+  
+  "version": "Version",
+  "guest": "Guest",
+  "todaysEventQuestion": "Which event will you join today?",
+  "searchEventsPlaceholder": "Search events, artists, venues...",
+  
+  "passwordMinLength": "Password must be at least {min} characters",
+  "@passwordMinLength": {
+    "placeholders": {
+      "min": {
+        "type": "String"
+      }
+    }
+  },
+  "passwordMaxLength": "Password must be at most {max} characters",
+  "@passwordMaxLength": {
+    "placeholders": {
+      "max": {
+        "type": "String"
+      }
+    }
+  },
+  "passwordRequireUppercase": "At least one uppercase letter",
+  "passwordRequireLowercase": "At least one lowercase letter",
+  "passwordRequireNumber": "At least one number",
+  "passwordRequireSpecial": "At least one special character",
+  "passwordTooCommon": "This password is too common",
+  "passwordNoSequential": "Cannot contain sequential characters",
+  "passwordNoRepeating": "Cannot contain repeating characters",
+  "passwordVeryWeak": "Very Weak",
+  "passwordWeak": "Weak",
+  "passwordFair": "Fair",
+  "passwordGood": "Good",
+  "passwordStrong": "Strong",
+  "passwordStrength": "Password Strength",
+  "passwordRequirements": "Password Requirements"
+}

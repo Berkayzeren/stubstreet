@@ -1,0 +1,106 @@
+name: Flutter CI
+
+on:
+  push:
+    branches: [ main, development ]
+  pull_request:
+    branches: [ main, development ]
+
+env:
+  FLUTTER_VERSION: '3.32.6'
+  DART_VERSION: '3.8.1'
+  NODE_VERSION: '18'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: functions/package-lock.json
+    
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+    
+    - name: Verify Flutter and Dart versions
+      run: |
+        flutter --version
+        dart --version
+    
+    - name: Install Firebase CLI
+      run: npm install -g firebase-tools
+    
+    - name: Install Firebase Functions dependencies
+      run: |
+        cd functions
+        npm install
+    
+    - name: Setup environment files
+      run: |
+        # Copy .env.example to .env for testing
+        cp functions/.env.example functions/.env
+        # Create main .env file if needed
+        if [ ! -f .env ]; then
+          touch .env
+        fi
+    
+    - name: Install dependencies
+      run: flutter pub get
+      
+    - name: Generate code
+      run: flutter pub run build_runner build --delete-conflicting-outputs
+    
+    - name: Analyze project source
+      run: flutter analyze
+    
+    - name: Run unit tests
+      run: flutter test
+    
+    - name: Start Firebase Emulators
+      run: |
+        firebase emulators:start --only auth,firestore,storage,functions --detach
+        # Wait for emulators to start
+        sleep 10
+    
+    - name: Run integration tests
+      run: |
+        # Run integration tests if they exist
+        if [ -d "integration_test" ]; then
+          flutter test integration_test/
+        else
+          echo "No integration tests found, skipping..."
+        fi
+    
+    - name: Run drive tests
+      run: |
+        # Run drive tests if they exist
+        if [ -d "test_driver" ]; then
+          flutter drive --target=test_driver/app.dart
+        else
+          echo "No drive tests found, skipping..."
+        fi
+    
+    - name: Stop Firebase Emulators
+      if: always()
+      run: |
+        firebase emulators:stop || true
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: |
+          coverage/
+          test-results.xml
+        retention-days: 30

@@ -1,0 +1,85 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code related
+.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android build artifacts
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# iOS build artifacts
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Incremental/
+ios/Runner/GeneratedPluginRegistrant.h
+ios/Runner/GeneratedPluginRegistrant.m
+/ios/Flutter/Generated.xcconfig
+/ios/Flutter/flutter_export_environment.sh
+/ios/Flutter/ephemeral/
+/ios/Runner/GeneratedPluginRegistrant.h
+/ios/Runner/GeneratedPluginRegistrant.m
+
+# Node modules
+**/node_modules/
+node_modules/
+
+# Firebase / Secret files
+.env
+.env*
+!.env.example
+*.json
+!package.json
+!package-lock.json
+!firebase.json
+!firestore.indexes.json
+!firestore.rules
+!storage.rules
+!apphosting.emulator.yaml
+# Only whitelist necessary json files
+# users.json and current_indexes.json are excluded for privacy/security
+
+# Build directories
+**/build/
+build/
+.dart_tool/
+**/ .dart_tool/
+
+# Mac specific
+.vsc*
+.history
+.build*

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="StubStreet is a secure, user-friendly and transparent online marketplace where you can buy and sell second-hand tickets for everything from concerts and sports to theater and festivals.">
+
+  <!-- Force HTML renderer on web to avoid CORS-tainted canvases with some CDNs (e.g., Ticketmaster images) -->
+  <meta name="flutter-web-renderer" content="html">
+  
+  <!-- Allow cross-origin image loading for Firebase Storage -->
+  <!--
+    CSP güncellemesi:
+    - Neden: Geliştirme sırasında Firebase Storage emulatörü (http://localhost:9199) veya gerçek Storage alanı,
+      ayrıca ImagePicker tarafından oluşturulan blob/data URL'leriyle görüntü önizlemeleri engellenebiliyor.
+    - Çözüm: img-src için blob: ve data: ekledik, firebasestorage.googleapis.com ve localhost:9199'ı izin verdik.
+      connect-src ve media-src için de localhost ve blob/data izinlerini genişlettik.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self' 'unsafe-inline' 'unsafe-eval' data: https: http: wss:;
+    img-src 'self' https: data: blob: https://s1.ticketm.net https://images.weserv.nl https://images.unsplash.com https://source.unsplash.com https://firebasestorage.googleapis.com http://localhost:9199 https://localhost:9199;
+    media-src 'self' https: data: blob: https://s1.ticketm.net https://images.weserv.nl https://images.unsplash.com https://source.unsplash.com https://firebasestorage.googleapis.com http://localhost:9199 https://localhost:9199;
+    connect-src 'self' data: blob: https: http: wss: ws: http://localhost:9199 https://localhost:9199;
+  ">
+  <meta name="referrer" content="no-referrer-when-downgrade">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="apple-mobile-web-app-title" content="stubstreet">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png?v=20250922">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/Icon-192.png?v=20250922">
+  <link rel="apple-touch-icon" sizes="167x167" href="icons/Icon-192.png?v=20250922">
+  <link rel="apple-touch-icon" sizes="152x152" href="icons/Icon-192.png?v=20250922">
+  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="icons/Icon-192.png?v=20250922">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png?v=20250922"/>
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png?v=20250922"/>
+  <link rel="icon" type="image/png" sizes="48x48" href="favicon-48x48.png?v=20250922"/>
+  <link rel="shortcut icon" href="favicon.png?v=20250922"/>
+
+  <title>stubstreet</title>
+  <link rel="manifest" href="manifest.json?v=20250922">
+  
+  <style>
+    /* reCAPTCHA simgesini varsayılan olarak gizle */
+    .grecaptcha-badge {
+      visibility: hidden !important;
+      opacity: 0 !important;
+      position: fixed !important;
+      bottom: 14px !important;
+      right: 14px !important;
+      z-index: 1000 !important;
+      transform: scale(0.8) !important;
+      transform-origin: bottom right !important;
+      transition: opacity 0.3s ease, visibility 0.3s ease !important;
+    }
+    
+    /* Sadece register ekranında SMS gönderilirken görünür yap */
+    body.show-recaptcha .grecaptcha-badge {
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+    
+    /* reCAPTCHA iframe'lerini kontrol et */
+    iframe[src*="recaptcha"] {
+      transition: opacity 0.3s ease !important;
+    }
+    
+    body.show-recaptcha iframe[src*="recaptcha"] {
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+    
+    /* reCAPTCHA container stilini ayarla */
+    #recaptcha-container {
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+    
+    /* Mobil cihazlarda daha küçük */
+    @media (max-width: 768px) {
+      .grecaptcha-badge {
+        transform: scale(0.6) !important;
+        bottom: 10px !important;
+        right: 10px !important;
+      }
+      body.show-recaptcha .grecaptcha-badge {
+        transform: scale(0.6) !important;
+      }
+    }
+  </style>
+  
+  <!-- Google Maps JavaScript API for web platform -->
+  <!-- We include the script explicitly so the `google` global is available for google_maps_flutter_web. -->
+  <!-- Using libraries=places for potential autocomplete/future features. -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY_HERE&libraries=places"></script>
+
+  <!-- reCAPTCHA Enterprise: Provide the site key explicitly so Firebase Auth can leverage it on web.
+       Why: On some projects the SDK cannot fetch enterprise config automatically and falls back to v2.
+       Including this script and exposing the key gives the runtime all the context it needs. -->
+  <script src="https://www.google.com/recaptcha/enterprise.js?render=6LceoM8rAAAAAGRDX8ab3q1rQP3REqSoL-76R11N"></script>
+  <script>
+    // Expose site key to runtime if a library needs to reference it programmatically
+    // (e.g., grecaptcha.enterprise.execute(window.__RECAPTCHA_SITE_KEY__, { action: 'login' }))
+    window.__RECAPTCHA_SITE_KEY__ = '6LceoM8rAAAAAGRDX8ab3q1rQP3REqSoL-76R11N';
+    
+    // reCAPTCHA kontrol fonksiyonları
+    window.showRecaptcha = function() {
+      console.log('🔐 reCAPTCHA simgesi gösteriliyor (SMS gönderimi)');
+      document.body.classList.add('show-recaptcha');
+    };
+    
+    window.hideRecaptcha = function() {
+      console.log('🔐 reCAPTCHA simgesi gizleniyor');
+      document.body.classList.remove('show-recaptcha');
+    };
+    
+    // Sayfa yüklendiğinde reCAPTCHA'yı gizli başlat
+    window.addEventListener('load', function() {
+      console.log('🔐 reCAPTCHA yüklendi (varsayılan: gizli)');
+      document.body.classList.remove('show-recaptcha');
+      
+      // reCAPTCHA yüklenme kontrolü
+      if (window.grecaptcha && window.grecaptcha.enterprise) {
+        console.log('✅ reCAPTCHA Enterprise hazır');
+      }
+      if (window.grecaptcha && window.grecaptcha.render) {
+        console.log('✅ reCAPTCHA v2 hazır');
+      }
+    });
+  </script>
+  
+  <!-- reCAPTCHA v2 fallback script.
+       Why: If Enterprise config cannot be used, Firebase falls back to v2 "explicit" mode.
+       Loading the API proactively helps avoid race conditions in some browsers/ad-block contexts. -->
+  <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+</head>
+<body>
+  <!-- A visible container placeholder for reCAPTCHA v2 if Firebase falls back and needs to render a widget.
+       We keep it empty; the SDK will mount into this element on demand. -->
+  <div id="recaptcha-container"></div>
+
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

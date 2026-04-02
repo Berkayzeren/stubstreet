@@ -1,0 +1,112 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // ========== GÜVENLİK FONKSİYONLARI ==========
+    
+    // Admin kontrol fonksiyonu
+    function isAdmin() {
+      return request.auth != null && (
+        // Admin user ID'leri
+        request.auth.uid == 'Fu9NlPlGXjQROCW96fZUUTLueUf2' ||
+        // Admin email kontrolü
+        request.auth.token.email == 'admin@biletsokagi.com'
+      );
+    }
+    
+    // Email doğrulanmış mı kontrolü
+    function isEmailVerified() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    
+    // Dosya boyutu kontrolü (max 10MB)
+    function isValidFileSize() {
+      return resource.size < 10 * 1024 * 1024;
+    }
+    
+    // İzin verilen dosya türleri
+    function isAllowedFileType() {
+      return resource.contentType.matches('image/.*') ||
+             resource.contentType.matches('application/pdf') ||
+             resource.contentType == 'text/calendar'; // .ics dosyaları için
+    }
+    
+    // ========== KULLANICI PROFİL RESİMLERİ ==========
+    match /profile_images/{userId}/{fileName} {
+      // Sadece kendi profil resmini okuyabilir/yazabilir
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+                   request.auth.uid == userId &&
+                   isEmailVerified() &&
+                   isValidFileSize() &&
+                   resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null && 
+                    (request.auth.uid == userId || isAdmin());
+    }
+    
+    // ========== BİLET RESİMLERİ ==========
+    match /ticket_images/{ticketId}/{fileName} {
+      // Herkes bilet resimlerini görebilir (marketplace mantığı)
+      allow read: if true;
+      
+      // Sadece authenticated kullanıcılar bilet resmi yükleyebilir
+      allow write: if request.auth != null && 
+                   isEmailVerified() &&
+                   isValidFileSize() &&
+                   resource.contentType.matches('image/.*');
+      
+      // Sadece bilet sahibi veya admin silebilir
+      allow delete: if request.auth != null && 
+                    (isAdmin() || 
+                     // Bilet sahibi kontrolü Firestore'dan yapılacak
+                     exists(/databases/(default)/documents/tickets/$(ticketId)) &&
+                     get(/databases/(default)/documents/tickets/$(ticketId)).data.sellerId == request.auth.uid);
+    }
+    
+    // ========== MESAJ EKLERİ ==========
+    match /message_attachments/{conversationId}/{fileName} {
+      // Sadece conversation participants okuyabilir
+      allow read: if request.auth != null && 
+                  exists(/databases/(default)/documents/conversations/$(conversationId)) &&
+                  request.auth.uid in get(/databases/(default)/documents/conversations/$(conversationId)).data.participants;
+      
+      // Sadece conversation participants yükleyebilir
+      allow write: if request.auth != null && 
+                   isEmailVerified() &&
+                   isValidFileSize() &&
+                   isAllowedFileType() &&
+                   exists(/databases/(default)/documents/conversations/$(conversationId)) &&
+                   request.auth.uid in get(/databases/(default)/documents/conversations/$(conversationId)).data.participants;
+      
+      // Sadece yükleyen kişi silebilir
+      allow delete: if request.auth != null && 
+                    resource.metadata.uploadedBy == request.auth.uid;
+    }
+    
+    // ========== GENEL DOSYALAR ==========
+    match /uploads/{userId}/{fileName} {
+      // Sadece sahibi okuyabilir/yazabilir
+      allow read, write: if request.auth != null && 
+                         request.auth.uid == userId &&
+                         isEmailVerified() &&
+                         isValidFileSize() &&
+                         isAllowedFileType();
+      allow delete: if request.auth != null && 
+                    (request.auth.uid == userId || isAdmin());
+    }
+    
+    // ========== ADMİN DOSYALARI ==========
+    match /admin/{fileName} {
+      // Sadece adminler erişebilir
+      allow read, write, delete: if isAdmin();
+    }
+    
+    // ========== GENEL KURAL ==========
+    // Yukarıdaki kurallarla eşleşmeyen tüm dosyalar için
+    match /{allPaths=**} {
+      // Varsayılan olarak erişim yok
+      allow read, write: if false;
+    }
+  }
+}

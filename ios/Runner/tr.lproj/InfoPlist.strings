@@ -1,0 +1,10 @@
+/* 
+  InfoPlist.strings - Turkish localization
+  stubstreet
+
+  Created by Flutter for localized app names.
+*/
+
+// Turkish app name for Turkish users
+"CFBundleName" = "Bilet Sokağı";
+"CFBundleDisplayName" = "Bilet Sokağı";

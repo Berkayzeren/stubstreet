@@ -1,0 +1,65 @@
+schema {
+  query: Query
+  mutation: Mutation
+}
+
+type Query {
+  conversations(page: Int, limit: Int, status: String): [Conversation]
+}
+
+type Mutation {
+  sendMessage(conversationId: ID!, content: String!): Message
+  checkoutTicket(ticketId: ID!, paymentMethod: String!): PaymentIntent
+  confirmOrder(paymentIntentId: ID!, orderId: ID!): Order
+}
+
+type Conversation {
+  id: ID
+  participants: [User]
+  lastMessage: Message
+  status: String
+  createdAt: String
+  updatedAt: String
+}
+
+type Message {
+  id: ID
+  senderId: ID
+  content: String
+  attachments: [Attachment]
+  createdAt: String
+}
+
+type User {
+  id: ID
+  username: String
+  email: String
+  avatarUrl: String
+}
+
+type Attachment {
+  id: ID
+  filename: String
+  mimeType: String
+  url: String
+}
+
+type PaymentIntent {
+  id: ID
+  clientSecret: String
+  amount: Int
+  currency: String
+  status: String
+}
+
+type Order {
+  id: ID
+  ticketId: ID
+  userId: ID
+  quantity: Int
+  totalAmount: Int
+  currency: String
+  status: String
+  createdAt: String
+  confirmedAt: String
+}

@@ -1,0 +1,1399 @@
+import * as functions from 'firebase-functions';
+import { onObjectFinalized, onObjectDeleted } from 'firebase-functions/v2/storage';
+import { onRequest, HttpsOptions } from 'firebase-functions/v2/https';
+import * as admin from 'firebase-admin';
+// Sharp bazı ortamlarda native bağımlılıklar nedeniyle yüklenemeyebilir.
+// Bu nedenle dinamik require ile deniyoruz; yoksa image işlemleri sessizce atlanır.
+let sharp: any;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  sharp = require('sharp');
+} catch (e: any) {
+  console.warn('sharp not available in this environment:', e?.message || e);
+}
+import * as path from 'path';
+import express from 'express';
+import cors from 'cors';
+import { body, param, query, validationResult } from 'express-validator';
+import { Request, Response, NextFunction } from 'express';
+import { Server } from 'socket.io';
+import * as http from 'http';
+import * as crypto from 'crypto';
+
+// Type definitions
+interface AuthenticatedRequest extends Request {
+  user: admin.auth.DecodedIdToken;
+}
+
+interface SocketUser {
+  socketId: string;
+  user: admin.auth.DecodedIdToken;
+  lastSeen: number;
+}
+
+// Socket.IO ile custom user property
+interface CustomSocket {
+  user: admin.auth.DecodedIdToken;
+  handshake: {
+    auth: {
+      token: string;
+    };
+  };
+  id: string;
+  join: (room: string) => void;
+  leave: (room: string) => void;
+  to: (room: string) => any;
+  emit: (event: string, data?: any) => void;
+  on: (event: string, callback: (data?: any) => void) => void;
+  broadcast: {
+    emit: (event: string, data?: any) => void;
+  };
+}
+
+interface ConversationData {
+  participants: string[];
+  title?: string;
+  type: 'private' | 'group';
+  createdBy: string;
+  createdAt: admin.firestore.FieldValue;
+  updatedAt: admin.firestore.FieldValue;
+  lastMessage?: any;
+  isActive: boolean;
+}
+
+interface MessageData {
+  conversationId: string;
+  senderId: string;
+  content: string;
+  timestamp: admin.firestore.FieldValue;
+  reactions?: ReactionData[];
+  readBy?: string[];
+  status?: 'sent' | 'delivered' | 'read';
+}
+
+interface ReactionData {
+  emoji: string;
+  userId: string;
+  createdAt: admin.firestore.FieldValue;
+}
+
+interface ReadReceiptData {
+  messageId: string;
+  userId: string;
+  conversationId: string;
+  readAt: admin.firestore.FieldValue;
+}
+
+// Initialize Firebase Admin
+admin.initializeApp();
+const db = admin.firestore();
+
+// Express app setup
+const app = express();
+app.use(cors());
+app.use(express.json());
+// ========== PAYTR TOKEN ENDPOINT ==========
+// Firebase config'den PAYTR bilgileri
+const PAYTR_MERCHANT_ID = functions.config().paytr?.merchant_id;
+const PAYTR_MERCHANT_KEY = functions.config().paytr?.merchant_key;
+const PAYTR_MERCHANT_SALT = functions.config().paytr?.merchant_salt;
+
+// POST /v1/paytr/initialize
+// Body beklenen alanlar: { email, amount, currency, orderId, customerIp, basket, okUrl, failUrl, installmentCount, testMode, paymentType, non3d, clientLang, userName, userAddress, userPhone }
+app.post('/v1/paytr/initialize', async (req: Request, res: Response) => {
+  try {
+    if (!PAYTR_MERCHANT_ID || !PAYTR_MERCHANT_KEY || !PAYTR_MERCHANT_SALT) {
+      return res.status(500).json({ success: false, error: 'PAYTR credentials missing' });
+    }
+
+    const {
+      email,
+      amount,
+      currency = 'TL',
+      orderId,
+      customerIp,
+      basket = [],
+      okUrl,
+      failUrl,
+      installmentCount = '0',
+      testMode = '1',
+      paymentType = 'card',
+      non3d = '0',
+      clientLang = 'tr',
+      userName = '',
+      userAddress = '',
+      userPhone = '',
+    } = (req.body || {}) as Record<string, any>;
+
+    if (!email || !amount || !orderId || !okUrl || !failUrl) {
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
+    }
+
+    const merchant_oid = String(orderId);
+    const user_ip = (customerIp || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '') as string;
+    const payment_amount = String(amount);
+
+    // hashSTR = merchant_id + user_ip + merchant_oid + email + payment_amount + payment_type + installment_count + currency + test_mode + non_3d
+    const hashStr = `${PAYTR_MERCHANT_ID}${user_ip}${merchant_oid}${email}${payment_amount}${paymentType}${installmentCount}${currency}${testMode}${non3d}`;
+    const paytrTokenRaw = `${hashStr}${PAYTR_MERCHANT_SALT}`;
+    const token = crypto.createHmac('sha256', PAYTR_MERCHANT_KEY).update(paytrTokenRaw).digest('base64');
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        merchant_id: PAYTR_MERCHANT_ID,
+        user_ip,
+        merchant_oid,
+        email,
+        payment_type: paymentType,
+        payment_amount,
+        currency,
+        test_mode: testMode,
+        non_3d: non3d,
+        merchant_ok_url: okUrl,
+        merchant_fail_url: failUrl,
+        user_name: userName,
+        user_address: userAddress,
+        user_phone: userPhone,
+        user_basket: JSON.stringify(basket),
+        debug_on: 1,
+        client_lang: clientLang,
+        token,
+        installment_count: installmentCount,
+      }
+    });
+  } catch (e: any) {
+    console.error('PayTR initialize error:', {
+      error: e?.message || e,
+      stack: e?.stack,
+      body: req.body,
+      timestamp: new Date().toISOString(),
+      hasCredentials: !!(PAYTR_MERCHANT_ID && PAYTR_MERCHANT_KEY && PAYTR_MERCHANT_SALT)
+    });
+    
+    return res.status(500).json({ 
+      success: false, 
+      error: e?.message || 'PayTR initialization failed',
+      message: 'Payment initialization failed. Please try again.'
+    });
+  }
+});
+
+// ========== PAYTR CALLBACK ENDPOINT ==========
+// POST /v1/paytr/callback
+// PayTR'den ödeme sonrası gelen callback'i işler
+app.post('/v1/paytr/callback', async (req: Request, res: Response) => {
+  try {
+    if (!PAYTR_MERCHANT_ID || !PAYTR_MERCHANT_KEY || !PAYTR_MERCHANT_SALT) {
+      return res.status(500).send('OK');
+    }
+
+    const {
+      merchant_oid,
+      status,
+      total_amount,
+      hash: receivedHash,
+      failed_reason_code,
+      failed_reason_msg,
+      test_mode,
+      payment_type,
+      currency,
+      payment_amount,
+    } = req.body || {};
+
+    // Gerekli alanları kontrol et
+    if (!merchant_oid || !status || !total_amount || !receivedHash) {
+      return res.status(200).send('OK');
+    }
+
+    // Hash doğrulaması
+    const hashStr = `${merchant_oid}${PAYTR_MERCHANT_SALT}${status}${total_amount}`;
+    const calculatedHash = crypto.createHmac('sha256', PAYTR_MERCHANT_KEY)
+      .update(hashStr)
+      .digest('base64');
+
+    if (receivedHash !== calculatedHash) {
+      console.error('PayTR callback hash mismatch', {
+        received: receivedHash,
+        calculated: calculatedHash,
+        merchant_oid
+      });
+      return res.status(200).send('OK');
+    }
+
+    // Checkout session'ı bul
+    const checkoutSessionQuery = await db.collection('checkout_sessions')
+      .where('paymentIntentId', '==', `mock_payment_intent_${merchant_oid}`)
+      .limit(1)
+      .get();
+
+    if (checkoutSessionQuery.empty) {
+      console.warn('Checkout session not found for PayTR callback:', merchant_oid);
+      return res.status(200).send('OK');
+    }
+
+    const checkoutSessionDoc = checkoutSessionQuery.docs[0];
+    const checkoutSession = checkoutSessionDoc.data();
+
+    if (status === 'success') {
+      // Ödeme başarılı - Order oluştur ve session'ı güncelle
+      const order = {
+        id: db.collection('orders').doc().id,
+        buyerId: checkoutSession.buyerId,
+        sellerId: checkoutSession.sellerId,
+        ticketId: checkoutSession.ticketId,
+        buyerName: checkoutSession.buyerEmail,
+        sellerName: checkoutSession.sellerEmail,
+        buyerEmail: checkoutSession.buyerEmail,
+        sellerEmail: checkoutSession.sellerEmail,
+        ticketPrice: checkoutSession.ticketPrice,
+        serviceFee: checkoutSession.serviceFee,
+        totalAmount: parseFloat(total_amount),
+        currency: currency || checkoutSession.currency,
+        status: 'confirmed',
+        type: 'purchase',
+        deliveryMethod: checkoutSession.deliveryMethod,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        notes: `Order created via PayTR payment - Transaction: ${merchant_oid}`,
+        attachments: [],
+        metadata: {
+          ...checkoutSession.metadata,
+          paytr_transaction_id: merchant_oid,
+          payment_type: payment_type,
+          test_mode: test_mode
+        },
+      };
+
+      // Batch operation ile order oluştur ve session güncelle
+      const batch = db.batch();
+      
+      const orderRef = db.collection('orders').doc(order.id);
+      batch.set(orderRef, order);
+      
+      const sessionRef = db.collection('checkout_sessions').doc(checkoutSessionDoc.id);
+      batch.update(sessionRef, {
+        status: 'completed',
+        orderId: order.id,
+        paymentStatus: 'successful',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        paytrTransactionId: merchant_oid
+      });
+
+      // Ticket'ı sold olarak işaretle
+      const ticketRef = db.collection('tickets').doc(checkoutSession.ticketId);
+      batch.update(ticketRef, {
+        status: 'sold',
+        soldAt: admin.firestore.FieldValue.serverTimestamp(),
+        soldTo: checkoutSession.buyerId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      await batch.commit();
+
+      console.log('PayTR payment successful, order created:', {
+        orderId: order.id,
+        merchant_oid,
+        amount: total_amount
+      });
+
+    } else {
+      // Ödeme başarısız - Session'ı güncelle
+      await db.collection('checkout_sessions').doc(checkoutSessionDoc.id).update({
+        status: 'failed',
+        paymentStatus: 'failed',
+        failedReason: failed_reason_msg || 'Payment failed',
+        failedReasonCode: failed_reason_code,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        paytrTransactionId: merchant_oid
+      });
+
+      console.log('PayTR payment failed:', {
+        merchant_oid,
+        reason: failed_reason_msg,
+        code: failed_reason_code
+      });
+    }
+
+    // PayTR'ye OK cevabı döndür
+    return res.status(200).send('OK');
+
+  } catch (e: any) {
+    console.error('PayTR callback error:', {
+      error: e?.message || e,
+      stack: e?.stack,
+      body: req.body,
+      timestamp: new Date().toISOString()
+    });
+    
+    // PayTR'ye her durumda OK dönmeliyiz ki tekrar callback göndermesin
+    return res.status(200).send('OK');
+  }
+});
+
+// HTTP server ve Socket.IO kurulumu
+// TEMPORARILY DISABLED FOR FIREBASE FUNCTIONS DEPLOYMENT
+/*
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
+*/
+
+// Socket.IO middleware - Token doğrulama
+// TEMPORARILY DISABLED FOR FIREBASE FUNCTIONS DEPLOYMENT
+// Mock io to prevent errors
+const io: any = { use: () => {}, on: () => {} };
+
+const authenticateSocket = async (socket: any, next: (err?: Error) => void) => {
+  try {
+    const token = socket.handshake.auth.token;
+    
+    if (!token) {
+      return next(new Error('Authentication error: Token gerekli'));
+    }
+    
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    socket.user = decodedToken;
+    
+    next();
+  } catch (error) {
+    console.error('Socket authentication error:', error);
+    next(new Error('Authentication error: Geçersiz token'));
+  }
+};
+
+// Socket.IO auth middleware'i uygula
+io.use(authenticateSocket);
+
+// Aktif kullanıcıları takip et
+const activeUsers = new Map<string, SocketUser>();
+
+// Socket.IO bağlantı yönetimi
+io.on('connection', (socket: any) => {
+  console.log(`User connected: ${socket.user.uid}`);
+  
+  // Kullanıcıyı aktif kullanıcılar listesine ekle
+  activeUsers.set(socket.user.uid, {
+    socketId: socket.id,
+    user: socket.user,
+    lastSeen: Date.now()
+  });
+  
+  // Kullanıcının online durumunu broadcast et
+  socket.broadcast.emit('user:online', {
+    userId: socket.user.uid,
+    timestamp: Date.now()
+  });
+  
+  // Conversation'a katılma
+  socket.on('joinConversation', async (conversationId: string) => {
+    try {
+      // Conversation erişim yetkisi kontrolü
+      const conversationRef = db.collection('conversations').doc(conversationId);
+      const conversationDoc = await conversationRef.get();
+      
+      if (!conversationDoc.exists) {
+        socket.emit('error', { message: 'Conversation bulunamadı' });
+        return;
+      }
+      
+      const conversationData = conversationDoc.data() as ConversationData;
+      if (!conversationData.participants.includes(socket.user.uid)) {
+        socket.emit('error', { message: 'Bu conversation\'a erişim yetkiniz yok' });
+        return;
+      }
+      
+      // Conversation odasına katıl
+      socket.join(conversationId);
+      console.log(`User ${socket.user.uid} joined conversation ${conversationId}`);
+      
+      // Diğer katılımcılara kullanıcının conversation'a katıldığını bildir
+      socket.to(conversationId).emit('user:joined', {
+        userId: socket.user.uid,
+        conversationId,
+        timestamp: Date.now()
+      });
+      
+    } catch (error) {
+      console.error('Join conversation error:', error);
+      socket.emit('error', { message: 'Conversation\'a katılma hatası' });
+    }
+  });
+  
+  // Conversation'dan ayrılma
+  socket.on('leaveConversation', (conversationId: string) => {
+    socket.leave(conversationId);
+    console.log(`User ${socket.user.uid} left conversation ${conversationId}`);
+    
+    // Diğer katılımcılara kullanıcının conversation'dan ayrıldığını bildir
+    socket.to(conversationId).emit('user:left', {
+      userId: socket.user.uid,
+      conversationId,
+      timestamp: Date.now()
+    });
+  });
+  
+  // Typing durumu - başlangıç
+  socket.on('typing:start', (data: { conversationId: string }) => {
+    const { conversationId } = data;
+    socket.to(conversationId).emit('typing:start', {
+      userId: socket.user.uid,
+      conversationId,
+      timestamp: Date.now()
+    });
+  });
+  
+  // Typing durumu - bitiş
+  socket.on('typing:stop', (data: { conversationId: string }) => {
+    const { conversationId } = data;
+    socket.to(conversationId).emit('typing:stop', {
+      userId: socket.user.uid,
+      conversationId,
+      timestamp: Date.now()
+    });
+  });
+  
+  // Mesaj okundu bildirimi
+  socket.on('message:read', (data: { messageId: string; conversationId: string }) => {
+    const { messageId, conversationId } = data;
+    socket.to(conversationId).emit('message:read', {
+      messageId,
+      userId: socket.user.uid,
+      conversationId,
+      timestamp: Date.now()
+    });
+  });
+  
+  // Bağlantı koptuğunda
+  socket.on('disconnect', () => {
+    console.log(`User disconnected: ${socket.user.uid}`);
+    
+    // Kullanıcıyı aktif kullanıcılar listesinden çıkar
+    activeUsers.delete(socket.user.uid);
+    
+    // Kullanıcının offline durumunu broadcast et
+    socket.broadcast.emit('user:offline', {
+      userId: socket.user.uid,
+      timestamp: Date.now()
+    });
+  });
+});
+
+// Yardımcı fonksiyonlar - Socket.IO events
+const emitMessageEvent = (eventType: string, messageData: any) => {
+  const { conversationId } = messageData;
+  io.to(conversationId).emit(eventType, messageData);
+};
+
+const emitToUser = (userId: string, eventType: string, data: any) => {
+  const activeUser = activeUsers.get(userId);
+  if (activeUser) {
+    io.to(activeUser.socketId).emit(eventType, data);
+  }
+};
+
+const emitToConversation = (conversationId: string, eventType: string, data: any) => {
+  io.to(conversationId).emit(eventType, data);
+};
+
+const THUMB_MAX_WIDTH = 200;
+const THUMB_MAX_HEIGHT = 200;
+const MEDIUM_MAX_WIDTH = 800;
+const MEDIUM_MAX_HEIGHT = 600;
+
+// Image processing function that runs when files are uploaded (disabled in local emulator)
+export const processImage = (process.env.FIREBASE_CONFIG ? onObjectFinalized(async (event) => {
+  const object = event.data;
+  const filePath = object.name;
+  const contentType = object.contentType;
+
+  // Exit if not an image
+  if (!contentType || !contentType.startsWith('image/')) {
+    console.log('Not an image file.');
+    return null;
+  }
+
+  // Exit if already processed
+  if (filePath?.includes('thumbnails/') || filePath?.includes('compressed/')) {
+    console.log('Already processed image.');
+    return null;
+  }
+
+  try {
+    if (!sharp) {
+      console.log('sharp missing, skipping image processing');
+      return null;
+    }
+    const bucket = admin.storage().bucket(object.bucket);
+    const fileName = path.basename(filePath!);
+    const fileDir = path.dirname(filePath!);
+    
+    // Create paths for processed images
+    const thumbFilePath = `${fileDir}/thumbnails/thumb_${fileName}`;
+    const compressedFilePath = `${fileDir}/compressed/compressed_${fileName}`;
+    
+    const file = bucket.file(filePath!);
+    const [fileBuffer] = await file.download();
+
+    // Create thumbnail
+    const thumbBuffer = await sharp(fileBuffer)
+      .resize(THUMB_MAX_WIDTH, THUMB_MAX_HEIGHT, {
+        fit: 'cover',
+        position: 'center'
+      })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    // Create compressed version
+    const compressedBuffer = await sharp(fileBuffer)
+      .resize(MEDIUM_MAX_WIDTH, MEDIUM_MAX_HEIGHT, {
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+
+    // Save thumbnail
+    await bucket.file(thumbFilePath).save(thumbBuffer, {
+      metadata: {
+        contentType: 'image/jpeg',
+        metadata: {
+          originalName: fileName,
+          processedAt: new Date().toISOString(),
+          type: 'thumbnail'
+        }
+      }
+    });
+
+    // Save compressed version
+    await bucket.file(compressedFilePath).save(compressedBuffer, {
+      metadata: {
+        contentType: 'image/jpeg',
+        metadata: {
+          originalName: fileName,
+          processedAt: new Date().toISOString(),
+          type: 'compressed'
+        }
+      }
+    });
+
+    console.log(`Image processed: ${fileName}`);
+    console.log(`Thumbnail created: ${thumbFilePath}`);
+    console.log(`Compressed version created: ${compressedFilePath}`);
+
+    return null;
+  } catch (error) {
+    console.error('Error processing image:', error);
+    return null;
+  }
+}) : (undefined as any));
+
+// Function to clean up processed images when original is deleted (disabled in local emulator)
+export const cleanupProcessedImages = (process.env.FIREBASE_CONFIG ? onObjectDeleted(async (event) => {
+  const object = event.data;
+  const filePath = object.name;
+  
+  // Skip if it's already a processed image
+  if (filePath?.includes('thumbnails/') || filePath?.includes('compressed/')) {
+    return null;
+  }
+
+  try {
+    const bucket = admin.storage().bucket(object.bucket);
+    const fileName = path.basename(filePath!);
+    const fileDir = path.dirname(filePath!);
+    
+    // Paths for processed images
+    const thumbFilePath = `${fileDir}/thumbnails/thumb_${fileName}`;
+    const compressedFilePath = `${fileDir}/compressed/compressed_${fileName}`;
+    
+    // Delete thumbnail if exists
+    try {
+      await bucket.file(thumbFilePath).delete();
+      console.log(`Deleted thumbnail: ${thumbFilePath}`);
+    } catch (error) {
+      console.log(`Thumbnail not found or already deleted: ${thumbFilePath}`);
+    }
+
+    // Delete compressed version if exists
+    try {
+      await bucket.file(compressedFilePath).delete();
+      console.log(`Deleted compressed version: ${compressedFilePath}`);
+    } catch (error) {
+      console.log(`Compressed version not found or already deleted: ${compressedFilePath}`);
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error cleaning up processed images:', error);
+    return null;
+  }
+}) : (undefined as any));
+
+// Middleware imports
+import authMiddleware from './middleware/authMiddleware';
+import { errorHandler, validationHandler, notFoundHandler, asyncHandler } from './middleware/errorHandler';
+import {
+  successResponse,
+  errorResponse,
+  validationErrorResponse,
+  paginatedResponse,
+  unauthorizedResponse,
+  forbiddenResponse,
+  notFoundResponse as notFoundResp,
+  conflictResponse,
+  serverErrorResponse
+} from './utils/responseHelper';
+
+// Korumalı route örneği - authMiddleware kullanımı
+app.get('/protected-route', authMiddleware, (req: any, res: Response) => {
+  return successResponse(res, {
+    user: {
+      uid: req.user.uid,
+      email: req.user.email,
+      name: req.user.name
+    }
+  }, 'Korumalı route\'a başarıyla erişildi');
+});
+
+// Test endpoint'leri - Hata yönetimi sistemini test etmek için
+app.post('/test/validation', 
+  [
+    body('email').isEmail().withMessage('Geçerli email adresi gerekli'),
+    body('age').isInt({ min: 1, max: 120 }).withMessage('Yaş 1-120 arasında olmalı'),
+    body('name').notEmpty().withMessage('İsim gerekli')
+  ],
+  validationHandler,
+  (req: Request, res: Response) => {
+    return successResponse(res, req.body, 'Validation başarılı');
+  }
+);
+
+// 404 test endpoint'i
+app.get('/test/404', (req: Request, res: Response, next: NextFunction) => {
+  return notFoundResp(res, 'Test 404 hatası');
+});
+
+// 500 test endpoint'i
+app.get('/test/500', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  throw new Error('Test sunucu hatası');
+}));
+
+// Auth test endpoint'i
+app.get('/test/auth', authMiddleware, (req: any, res: Response) => {
+  return successResponse(res, { message: 'Auth test başarılı' });
+});
+
+// Express route to get image variants
+app.get('/image-variants', async (req: Request, res: Response) => {
+  try {
+    const { imagePath } = req.query;
+    
+    if (!imagePath) {
+      res.status(400).json({ error: 'Image path is required' });
+      return;
+    }
+
+    const bucket = admin.storage().bucket();
+    const fileName = path.basename(imagePath as string);
+    const fileDir = path.dirname(imagePath as string);
+    
+    const thumbFilePath = `${fileDir}/thumbnails/thumb_${fileName}`;
+    const compressedFilePath = `${fileDir}/compressed/compressed_${fileName}`;
+    
+    const variants = {
+      original: imagePath,
+      thumbnail: null as string | null,
+      compressed: null as string | null
+    };
+
+    // Check if thumbnail exists
+    try {
+      const [thumbExists] = await bucket.file(thumbFilePath).exists();
+      if (thumbExists) {
+        const [thumbUrl] = await bucket.file(thumbFilePath).getSignedUrl({
+          action: 'read',
+          expires: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
+        });
+        variants.thumbnail = thumbUrl;
+      }
+    } catch (error) {
+      console.log('Thumbnail not found:', (error as Error).message);
+    }
+
+    // Check if compressed version exists
+    try {
+      const [compressedExists] = await bucket.file(compressedFilePath).exists();
+      if (compressedExists) {
+        const [compressedUrl] = await bucket.file(compressedFilePath).getSignedUrl({
+          action: 'read',
+          expires: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
+        });
+        variants.compressed = compressedUrl;
+      }
+    } catch (error) {
+      console.log('Compressed version not found:', (error as Error).message);
+    }
+
+    res.json(variants);
+  } catch (error) {
+    console.error('Error getting image variants:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /v1/conversations - Kullanıcının conversation'larını getir
+app.get('/v1/conversations',
+  authMiddleware,
+  asyncHandler(async (req: any, res: Response) => {
+    const userId = req.user.uid;
+    const { limit = 20, cursor } = req.query;
+
+    let query = db.collection('conversations')
+      .where('participants', 'array-contains', userId)
+      .orderBy('updatedAt', 'desc')
+      .limit(parseInt(limit as string));
+
+    if (cursor) {
+      query = query.startAfter(cursor);
+    }
+
+    const snapshot = await query.get();
+    const conversations = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    return successResponse(res, conversations, 'Conversations başarıyla getirildi');
+  })
+);
+
+// POST /v1/conversations - Yeni conversation oluştur
+app.post('/v1/conversations',
+  [
+    body('participants').isArray().withMessage('Participants array gerekli'),
+    body('participants').isLength({ min: 2 }).withMessage('En az 2 participant gerekli'),
+    body('title').optional().isString(),
+    body('type').optional().isIn(['private', 'group']).withMessage('Type private veya group olmalı')
+  ],
+  authMiddleware,
+  validationHandler,
+  asyncHandler(async (req: any, res: Response) => {
+    const { participants, title, type = 'private' } = req.body;
+    const creatorId = req.user.uid;
+
+    // Creator'ı participants listesine ekle
+    const allParticipants = [...new Set([...participants, creatorId])];
+
+    const newConversation: ConversationData = {
+      participants: allParticipants,
+      title: title || null,
+      type,
+      createdBy: creatorId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastMessage: null,
+      isActive: true
+    };
+
+    const docRef = await db.collection('conversations').add(newConversation);
+    const conversationData = { id: docRef.id, ...newConversation };
+
+    // WebSocket event'i yayınla - Yeni conversation oluşturuldu
+    allParticipants.forEach(participantId => {
+      emitToUser(participantId, 'conversation:created', {
+        conversationId: docRef.id,
+        conversation: conversationData,
+        createdBy: creatorId,
+        timestamp: Date.now()
+      });
+    });
+
+    console.log(`WebSocket event emitted: conversation:created for conversation ${docRef.id}`);
+
+    return successResponse(res, conversationData, 'Conversation başarıyla oluşturuldu', 201);
+  })
+);
+
+// PUT /v1/conversations/:cid - Conversation güncelle
+app.put('/v1/conversations/:cid',
+  [
+    param('cid').notEmpty().withMessage('Conversation ID gerekli'),
+    body('title').optional().isString(),
+    body('participants').optional().isArray()
+  ],
+  authMiddleware,
+  validationHandler,
+  asyncHandler(async (req: any, res: Response) => {
+    const { cid } = req.params;
+    const { title, participants } = req.body;
+    const userId = req.user.uid;
+
+    const conversationRef = db.collection('conversations').doc(cid);
+    const conversationDoc = await conversationRef.get();
+
+    if (!conversationDoc.exists) {
+      return notFoundResp(res, 'Conversation bulunamadı');
+    }
+
+    const conversationData = conversationDoc.data() as ConversationData;
+    if (!conversationData.participants.includes(userId)) {
+      return forbiddenResponse(res, 'Bu conversation\'ı güncelleme yetkiniz yok');
+    }
+
+    const updateData: Partial<ConversationData> = {
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    if (title !== undefined) updateData.title = title;
+    if (participants !== undefined) updateData.participants = participants;
+
+    await conversationRef.update(updateData);
+
+    const updatedConversationData = { id: cid, ...conversationData, ...updateData };
+
+    // WebSocket event'i yayınla - Conversation güncellendi
+    const targetParticipants = participants || conversationData.participants;
+    targetParticipants.forEach((participantId: string) => {
+      emitToUser(participantId, 'conversation:updated', {
+        conversationId: cid,
+        conversation: updatedConversationData,
+        updatedBy: userId,
+        changes: { title, participants },
+        timestamp: Date.now()
+      });
+    });
+
+    console.log(`WebSocket event emitted: conversation:updated for conversation ${cid}`);
+
+    return successResponse(res, updatedConversationData, 'Conversation başarıyla güncellendi');
+  })
+);
+
+// DELETE /v1/conversations/:cid - Conversation sil
+app.delete('/v1/conversations/:cid',
+  [
+    param('cid').notEmpty().withMessage('Conversation ID gerekli')
+  ],
+  authMiddleware,
+  async (req: any, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, error: errors.array() });
+    }
+
+    try {
+      const { cid } = req.params;
+      const userId = req.user.uid;
+
+      const conversationRef = db.collection('conversations').doc(cid);
+      const conversationDoc = await conversationRef.get();
+
+      if (!conversationDoc.exists) {
+        return res.status(404).json({ success: false, error: 'Conversation bulunamadi' });
+      }
+
+      const conversationData = conversationDoc.data() as ConversationData;
+      if (!conversationData.participants.includes(userId)) {
+        return res.status(403).json({ success: false, error: 'Bu conversation\'ı silme yetkiniz yok' });
+      }
+
+      // Conversation'ı soft delete yap
+      await conversationRef.update({
+        isActive: false,
+        deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+        deletedBy: userId
+      });
+
+      // WebSocket event'i yayınla - Conversation silindi
+      conversationData.participants.forEach(participantId => {
+        emitToUser(participantId, 'conversation:deleted', {
+          conversationId: cid,
+          deletedBy: userId,
+          timestamp: Date.now()
+        });
+      });
+
+      console.log(`WebSocket event emitted: conversation:deleted for conversation ${cid}`);
+
+      res.json({ success: true, data: { id: cid }, error: null });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  }
+);
+
+// GET /v1/conversations/:cid/messages
+app.get('/v1/conversations/:cid/messages',
+  [
+    param('cid').notEmpty().withMessage('Conversation ID gerekli'),
+    query('limit').isInt({ min: 1 }).optional(),
+    query('cursor').optional()
+  ],
+  authMiddleware,
+  validationHandler,
+  asyncHandler(async (req: any, res: Response) => {
+    const { cid } = req.params;
+    const { limit = 10, cursor } = req.query;
+    const userId = req.user.uid;
+
+    // Conversation erişim yetkisi kontrolü
+    const conversationRef = db.collection('conversations').doc(cid);
+    const conversationDoc = await conversationRef.get();
+    
+    if (!conversationDoc.exists) {
+      return notFoundResp(res, 'Conversation bulunamadı');
+    }
+    
+    const conversationData = conversationDoc.data() as ConversationData;
+    if (!conversationData.participants.includes(userId)) {
+      return forbiddenResponse(res, 'Bu conversation\'a erişim yetkiniz yok');
+    }
+
+    const messagesRef = db.collection('messages').where('conversationId', '==', cid);
+    let query = messagesRef.orderBy('timestamp').limit(parseInt(limit as string));
+
+    if (cursor) {
+      query = query.startAfter(cursor);
+    }
+
+    const snapshot = await query.get();
+    const messages = snapshot.docs.map(doc => doc.data());
+
+    // Sayfalama bilgisiyle birlikte yanıt
+    const pagination = {
+      limit: parseInt(limit as string),
+      hasNext: snapshot.docs.length === parseInt(limit as string),
+      ...(cursor && { cursor })
+    };
+
+    return paginatedResponse(res, messages, pagination, 'Mesajlar başarıyla getirildi');
+  })
+);
+
+// POST /v1/conversations/:cid/messages
+app.post('/v1/conversations/:cid/messages',
+  [
+    param('cid').notEmpty().withMessage('Conversation ID gerekli'),
+    body('content').notEmpty().withMessage('Mesaj içeriği gerekli')
+  ],
+  authMiddleware,
+  validationHandler,
+  asyncHandler(async (req: any, res: Response) => {
+    const { cid } = req.params;
+    const { content } = req.body;
+    const senderId = req.user.uid;
+    
+    // Conversation erişim yetkisi kontrolü
+    const conversationRef = db.collection('conversations').doc(cid);
+    const conversationDoc = await conversationRef.get();
+    
+    if (!conversationDoc.exists) {
+      return notFoundResp(res, 'Conversation bulunamadı');
+    }
+    
+    const conversationData = conversationDoc.data() as ConversationData;
+    if (!conversationData.participants.includes(senderId)) {
+      return forbiddenResponse(res, 'Bu conversation\'a mesaj gönderme yetkiniz yok');
+    }
+
+    const newMessage: MessageData = {
+      conversationId: cid,
+      senderId,
+      content,
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    const docRef = await db.collection('messages').add(newMessage);
+    
+    // WebSocket event'i yayınla - Yeni mesaj
+    const messageData = { id: docRef.id, ...newMessage };
+    io.to(cid).emit('message:created', {
+      messageId: docRef.id,
+      conversationId: cid,
+      senderId,
+      content,
+      timestamp: Date.now(),
+      message: messageData
+    });
+    
+    console.log(`WebSocket event emitted: message:created for conversation ${cid}`);
+
+    return successResponse(res, messageData, 'Mesaj başarıyla gönderildi', 201);
+  })
+);
+
+// ReadReceipt ve Reaction Yardımcı Fonksiyonları
+
+/**
+ * Read receipt oluşturur
+ * @param messageId - Mesaj ID'si
+ * @param userId - Kullanıcı ID'si
+ * @param conversationId - Konuşma ID'si
+ * @returns Read receipt bilgisi
+ */
+async function createReadReceipt(messageId: string, userId: string, conversationId: string) {
+  try {
+    const readReceiptData: ReadReceiptData = {
+      messageId,
+      userId,
+      conversationId,
+      readAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    const readReceiptRef = await db.collection('readReceipts').add(readReceiptData);
+    console.log(`Read receipt created for message ${messageId} by user ${userId}`);
+    
+    return { id: readReceiptRef.id, ...readReceiptData };
+  } catch (error) {
+    console.error('Error creating read receipt:', error);
+    throw error;
+  }
+}
+
+/**
+ * Mesaj durumunu günceller
+ * @param messageId - Mesaj ID'si
+ * @param status - Yeni durum (sent, delivered, read)
+ * @param userId - Kullanıcı ID'si (opsiyonel)
+ * @returns Güncellenen mesaj bilgisi
+ */
+async function updateMessageStatus(messageId: string, status: 'sent' | 'delivered' | 'read', userId?: string) {
+  try {
+    const messageRef = db.collection('messages').doc(messageId);
+    const messageDoc = await messageRef.get();
+    
+    if (!messageDoc.exists) {
+      throw new Error('Mesaj bulunamadı');
+    }
+
+    const updateData: any = {
+      status,
+      statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    // Eğer status 'read' ise ve userId varsa, readBy array'ini güncelle
+    if (status === 'read' && userId) {
+      updateData.readBy = admin.firestore.FieldValue.arrayUnion(userId);
+    }
+
+    await messageRef.update(updateData);
+    console.log(`Message ${messageId} status updated to ${status}`);
+    
+    return { id: messageId, status, userId };
+  } catch (error) {
+    console.error('Error updating message status:', error);
+    throw error;
+  }
+}
+
+/**
+ * Mesaj reaksiyonunu toggle eder (ekle/kaldır)
+ * @param messageId - Mesaj ID'si
+ * @param emoji - Emoji karakteri
+ * @param userId - Kullanıcı ID'si
+ * @returns Güncellenmiş reaksiyon bilgisi
+ */
+async function toggleReaction(messageId: string, emoji: string, userId: string) {
+  try {
+    const messageRef = db.collection('messages').doc(messageId);
+    const messageDoc = await messageRef.get();
+    
+    if (!messageDoc.exists) {
+      throw new Error('Mesaj bulunamadı');
+    }
+
+    const messageData = messageDoc.data() as MessageData;
+    const currentReactions = messageData.reactions || [];
+    
+    // Kullanıcının bu emoji için mevcut reaksiyonunu kontrol et
+    const existingReactionIndex = currentReactions.findIndex(
+      reaction => reaction.emoji === emoji && reaction.userId === userId
+    );
+
+    let action: 'added' | 'removed';
+    let updatedReactions: ReactionData[];
+
+    if (existingReactionIndex !== -1) {
+      // Reaksiyon varsa, kaldır
+      updatedReactions = currentReactions.filter(
+        (reaction, index) => index !== existingReactionIndex
+      );
+      action = 'removed';
+    } else {
+      // Reaksiyon yoksa, ekle
+      updatedReactions = [...currentReactions, {
+        emoji,
+        userId,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      }];
+      action = 'added';
+    }
+
+    await messageRef.update({ reactions: updatedReactions });
+    console.log(`Reaction ${action} for message ${messageId} by user ${userId}`);
+    
+    return { messageId, emoji, userId, action };
+  } catch (error) {
+    console.error('Error toggling reaction:', error);
+    throw error;
+  }
+}
+
+// ReadReceipt ve Reaction endpoint'lerini güncelle
+
+// PUT /v1/messages/:mid/read - Geliştirilmiş read receipt
+app.put('/v1/messages/:mid/read',
+  [
+    param('mid').notEmpty().withMessage('Message ID gerekli')
+  ],
+  authMiddleware,
+  async (req: any, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, error: errors.array() });
+    }
+
+    try {
+      const { mid } = req.params;
+      const receiverId = req.user.uid;
+
+      const messageRef = db.collection('messages').doc(mid);
+      const messageDoc = await messageRef.get();
+
+      if (!messageDoc.exists) {
+        return res.status(404).json({ success: false, error: 'Mesaj bulunamadi' });
+      }
+
+      const messageData = messageDoc.data() as MessageData;
+      const conversationId = messageData.conversationId;
+
+      // Mesaj durumunu güncelle
+      await updateMessageStatus(mid, 'read', receiverId);
+
+      // Read receipt oluştur
+      const readReceipt = await createReadReceipt(mid, receiverId, conversationId);
+      
+      // WebSocket event'i yayınla - Mesaj okundu
+      io.to(conversationId).emit('message:read', {
+        messageId: mid,
+        conversationId,
+        userId: receiverId,
+        readReceipt,
+        timestamp: Date.now()
+      });
+      
+      console.log(`WebSocket event emitted: message:read for conversation ${conversationId}`);
+
+      res.json({ 
+        success: true, 
+        data: { 
+          messageId: mid, 
+          readReceipt 
+        }, 
+        error: null 
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  }
+);
+
+// POST /v1/messages/:mid/reactions - Geliştirilmiş reaction toggle
+app.post('/v1/messages/:mid/reactions',
+  [
+    param('mid').notEmpty().withMessage('Message ID gerekli'),
+    body('emoji').notEmpty().withMessage('Emoji gerekli')
+  ],
+  authMiddleware,
+  async (req: any, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, error: errors.array() });
+    }
+
+    try {
+      const { mid } = req.params;
+      const { emoji } = req.body;
+      const userId = req.user.uid;
+
+      const result = await toggleReaction(mid, emoji, userId);
+      
+      // Mesaj bilgisini al conversation ID için
+      const messageRef = db.collection('messages').doc(mid);
+      const messageDoc = await messageRef.get();
+      const messageData = messageDoc.data() as MessageData;
+      
+      // WebSocket event'i yayınla - Reaksiyon eklendi/kaldırıldı
+      io.to(messageData.conversationId).emit('message:reaction', {
+        messageId: mid,
+        conversationId: messageData.conversationId,
+        userId,
+        emoji,
+        action: result.action,
+        timestamp: Date.now()
+      });
+      
+      console.log(`WebSocket event emitted: message:reaction (${result.action}) for conversation ${messageData.conversationId}`);
+
+      res.json({ 
+        success: true, 
+        data: result, 
+        error: null 
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  }
+);
+
+// GET /v1/messages/:mid/read-receipts - Read receipt'leri getir
+app.get('/v1/messages/:mid/read-receipts',
+  [
+    param('mid').notEmpty().withMessage('Message ID gerekli')
+  ],
+  authMiddleware,
+  async (req: any, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, error: errors.array() });
+    }
+
+    try {
+      const { mid } = req.params;
+      const userId = req.user.uid;
+
+      // Mesajın varlığını ve erişim yetkisini kontrol et
+      const messageRef = db.collection('messages').doc(mid);
+      const messageDoc = await messageRef.get();
+
+      if (!messageDoc.exists) {
+        return res.status(404).json({ success: false, error: 'Mesaj bulunamadi' });
+      }
+
+      const messageData = messageDoc.data() as MessageData;
+      const conversationId = messageData.conversationId;
+
+      // Konuşma erişim yetkisi kontrolü
+      const conversationRef = db.collection('conversations').doc(conversationId);
+      const conversationDoc = await conversationRef.get();
+      
+      if (!conversationDoc.exists) {
+        return res.status(404).json({ success: false, error: 'Conversation bulunamadi' });
+      }
+      
+      const conversationData = conversationDoc.data() as ConversationData;
+      if (!conversationData.participants.includes(userId)) {
+        return res.status(403).json({ success: false, error: 'Bu mesaja erisim yetkiniz yok' });
+      }
+
+      // Read receipt'leri getir
+      const readReceiptsSnapshot = await db.collection('readReceipts')
+        .where('messageId', '==', mid)
+        .orderBy('readAt', 'desc')
+        .get();
+
+      const readReceipts = readReceiptsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      res.json({ 
+        success: true, 
+        data: readReceipts, 
+        error: null 
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  }
+);
+
+// GET /v1/messages/:mid/reactions - Mesaj reaksiyonlarını getir
+app.get('/v1/messages/:mid/reactions',
+  [
+    param('mid').notEmpty().withMessage('Message ID gerekli')
+  ],
+  authMiddleware,
+  async (req: any, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, error: errors.array() });
+    }
+
+    try {
+      const { mid } = req.params;
+      const userId = req.user.uid;
+
+      // Mesajın varlığını ve erişim yetkisini kontrol et
+      const messageRef = db.collection('messages').doc(mid);
+      const messageDoc = await messageRef.get();
+
+      if (!messageDoc.exists) {
+        return res.status(404).json({ success: false, error: 'Mesaj bulunamadi' });
+      }
+
+      const messageData = messageDoc.data() as MessageData;
+      const conversationId = messageData.conversationId;
+
+      // Konuşma erişim yetkisi kontrolü
+      const conversationRef = db.collection('conversations').doc(conversationId);
+      const conversationDoc = await conversationRef.get();
+      
+      if (!conversationDoc.exists) {
+        return res.status(404).json({ success: false, error: 'Conversation bulunamadi' });
+      }
+      
+      const conversationData = conversationDoc.data() as ConversationData;
+      if (!conversationData.participants.includes(userId)) {
+        return res.status(403).json({ success: false, error: 'Bu mesaja erisim yetkiniz yok' });
+      }
+
+      // Mesaj reaksiyonlarını getir
+      const reactions = messageData.reactions || [];
+      
+      // Reaksiyonları emoji'ye göre grupla
+      const groupedReactions = reactions.reduce((acc: any, reaction: ReactionData) => {
+        if (!acc[reaction.emoji]) {
+          acc[reaction.emoji] = [];
+        }
+        acc[reaction.emoji].push({
+          userId: reaction.userId,
+          createdAt: reaction.createdAt
+        });
+        return acc;
+      }, {});
+
+      res.json({ 
+        success: true, 
+        data: {
+          messageId: mid,
+          reactions: groupedReactions,
+          totalReactions: reactions.length
+        }, 
+        error: null 
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  }
+);
+
+// Global error handler middleware'lerini ekle
+app.use(notFoundHandler); // 404 handler - tüm route'lardan sonra
+app.use(errorHandler); // Global error handler - en sonda
+
+// Firebase Cloud Functions kullanarak HTTP sunucusunu çalıştırın
+const httpsOptions: HttpsOptions = {
+  memory: '512MiB',
+  timeoutSeconds: 60
+};
+
+export const api = onRequest(httpsOptions, app);
+
+// Yardımcı fonksiyonları export et
+export { createReadReceipt, updateMessageStatus, toggleReaction };

@@ -1,0 +1,597 @@
+openapi: 3.0.0
+info:
+  title: StubStreet API
+  description: API for messaging and ticket purchase functionality
+  version: 1.0.0
+  contact:
+    name: StubStreet API Team
+    email: api@stubstreet.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.stubstreet.com/v1
+    description: Production server
+  - url: https://api-staging.stubstreet.com/v1
+    description: Staging server
+  - url: http://localhost:8080/v1
+    description: Local development server
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+paths:
+  /conversations:
+    get:
+      summary: Get user conversations
+      description: Retrieves a paginated list of conversations for the authenticated user
+      operationId: getConversations
+      tags:
+        - Messaging
+      parameters:
+        - name: page
+          in: query
+          description: Page number for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Number of conversations per page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: status
+          in: query
+          description: Filter by conversation status
+          required: false
+          schema:
+            type: string
+            enum: [active, archived, blocked]
+      responses:
+        '200':
+          description: Successfully retrieved conversations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Conversation'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /conversations/{id}/messages:
+    post:
+      summary: Send a message to a conversation
+      description: Sends a new message to a specific conversation
+      operationId: sendMessage
+      tags:
+        - Messaging
+      parameters:
+        - name: id
+          in: path
+          description: Conversation ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageCreate'
+      responses:
+        '201':
+          description: Message sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /tickets/{id}/checkout:
+    post:
+      summary: Initiate ticket checkout
+      description: Initiates the checkout process for a specific ticket and returns a payment intent
+      operationId: checkoutTicket
+      tags:
+        - Purchase
+      parameters:
+        - name: id
+          in: path
+          description: Ticket ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutRequest'
+      responses:
+        '200':
+          description: Checkout initiated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentIntent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Ticket no longer available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /orders/confirm:
+    post:
+      summary: Confirm order after payment
+      description: Confirms an order after payment has been successfully processed
+      operationId: confirmOrder
+      tags:
+        - Purchase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderConfirmation'
+      responses:
+        '200':
+          description: Order confirmed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Order already confirmed or payment failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    Conversation:
+      type: object
+      required:
+        - id
+        - participants
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the conversation
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+          description: List of conversation participants
+        lastMessage:
+          $ref: '#/components/schemas/Message'
+        status:
+          type: string
+          enum: [active, archived, blocked]
+          description: Conversation status
+        createdAt:
+          type: string
+          format: date-time
+          description: Conversation creation timestamp
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+
+    Message:
+      type: object
+      required:
+        - id
+        - conversationId
+        - senderId
+        - content
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the message
+        conversationId:
+          type: string
+          format: uuid
+          description: ID of the conversation this message belongs to
+        senderId:
+          type: string
+          format: uuid
+          description: ID of the user who sent the message
+        content:
+          type: string
+          maxLength: 1000
+          description: Message content
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+          description: Message attachments
+        createdAt:
+          type: string
+          format: date-time
+          description: Message creation timestamp
+        readAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when message was read
+
+    MessageCreate:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          maxLength: 1000
+          description: Message content
+        attachments:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Attachment IDs to include with the message
+
+    User:
+      type: object
+      required:
+        - id
+        - username
+        - email
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the user
+        username:
+          type: string
+          description: User's display name
+        email:
+          type: string
+          format: email
+          description: User's email address
+        avatar:
+          type: string
+          format: uri
+          nullable: true
+          description: URL to user's avatar image
+
+    Attachment:
+      type: object
+      required:
+        - id
+        - filename
+        - mimeType
+        - size
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the attachment
+        filename:
+          type: string
+          description: Original filename
+        mimeType:
+          type: string
+          description: MIME type of the attachment
+        size:
+          type: integer
+          description: File size in bytes
+        url:
+          type: string
+          format: uri
+          description: URL to access the attachment
+
+    CheckoutRequest:
+      type: object
+      required:
+        - paymentMethod
+        - quantity
+      properties:
+        paymentMethod:
+          type: string
+          enum: [card, paypal, apple_pay, google_pay]
+          description: Payment method to use
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: Number of tickets to purchase
+        promoCode:
+          type: string
+          nullable: true
+          description: Promotional code to apply
+        billingAddress:
+          $ref: '#/components/schemas/Address'
+
+    PaymentIntent:
+      type: object
+      required:
+        - id
+        - clientSecret
+        - amount
+        - currency
+        - status
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the payment intent
+        clientSecret:
+          type: string
+          description: Client secret for completing payment
+        amount:
+          type: integer
+          description: Amount to charge in cents
+        currency:
+          type: string
+          description: Currency code (e.g., USD, EUR)
+        status:
+          type: string
+          enum: [requires_payment_method, requires_confirmation, requires_action, processing, succeeded, canceled]
+          description: Payment intent status
+        orderId:
+          type: string
+          format: uuid
+          description: Associated order ID
+        expiresAt:
+          type: string
+          format: date-time
+          description: When the payment intent expires
+
+    OrderConfirmation:
+      type: object
+      required:
+        - paymentIntentId
+        - orderId
+      properties:
+        paymentIntentId:
+          type: string
+          description: ID of the completed payment intent
+        orderId:
+          type: string
+          format: uuid
+          description: Order ID to confirm
+
+    Order:
+      type: object
+      required:
+        - id
+        - ticketId
+        - userId
+        - quantity
+        - totalAmount
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the order
+        ticketId:
+          type: string
+          format: uuid
+          description: ID of the purchased ticket
+        userId:
+          type: string
+          format: uuid
+          description: ID of the user who placed the order
+        quantity:
+          type: integer
+          description: Number of tickets purchased
+        totalAmount:
+          type: integer
+          description: Total amount paid in cents
+        currency:
+          type: string
+          description: Currency code
+        status:
+          type: string
+          enum: [pending, confirmed, cancelled, refunded]
+          description: Order status
+        tickets:
+          type: array
+          items:
+            $ref: '#/components/schemas/TicketInstance'
+          description: Individual ticket instances
+        createdAt:
+          type: string
+          format: date-time
+          description: Order creation timestamp
+        confirmedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Order confirmation timestamp
+
+    TicketInstance:
+      type: object
+      required:
+        - id
+        - qrCode
+        - seatNumber
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the ticket instance
+        qrCode:
+          type: string
+          description: QR code for ticket validation
+        seatNumber:
+          type: string
+          nullable: true
+          description: Assigned seat number
+        isUsed:
+          type: boolean
+          default: false
+          description: Whether the ticket has been used
+
+    Address:
+      type: object
+      required:
+        - street
+        - city
+        - country
+        - postalCode
+      properties:
+        street:
+          type: string
+          description: Street address
+        city:
+          type: string
+          description: City
+        state:
+          type: string
+          nullable: true
+          description: State or province
+        country:
+          type: string
+          description: Country code (ISO 3166-1 alpha-2)
+        postalCode:
+          type: string
+          description: Postal or ZIP code
+
+    Pagination:
+      type: object
+      required:
+        - page
+        - limit
+        - total
+        - totalPages
+      properties:
+        page:
+          type: integer
+          description: Current page number
+        limit:
+          type: integer
+          description: Number of items per page
+        total:
+          type: integer
+          description: Total number of items
+        totalPages:
+          type: integer
+          description: Total number of pages
+        hasNext:
+          type: boolean
+          description: Whether there are more pages
+        hasPrevious:
+          type: boolean
+          description: Whether there are previous pages
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Error code
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          nullable: true
+          description: Additional error details
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    TooManyRequests:
+      description: Too many requests
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

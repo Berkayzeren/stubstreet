@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Kullanıcılar sadece giriş yaptıysa biletleri görebilir
+    match /tickets/{ticketId} {
+      // Herkes biletleri okuyabilir (giriş yapmış olması şartıyla)
+      allow read: if request.auth != null;
+      
+      // Sadece bilet sahibi kendi biletini güncelleyebilir/silebilir
+      allow update, delete: if request.auth != null && 
+                               request.auth.uid == resource.data.sellerId;
+      
+      // Giriş yapmış kullanıcılar bilet ekleyebilir
+      allow create: if request.auth != null && 
+                       request.auth.uid == request.resource.data.sellerId;
+    }
+    
+    // Kullanıcı profilleri (ilerisi için)
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Mesajlar (ilerisi için)
+    match /messages/{messageId} {
+      allow read, write: if request.auth != null && 
+                            (request.auth.uid == resource.data.senderId || 
+                             request.auth.uid == resource.data.receiverId);
+    }
+  }
+}
